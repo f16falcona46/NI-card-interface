@@ -3,6 +3,8 @@
 
 #include "stdafx.h"
 #include "NILineScanReader.h"
+#include <cstdint>
+#include "niimaq.h"
 
 #define MAX_LOADSTRING 100
 
@@ -16,6 +18,7 @@ ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+void setup(int num_lines);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -42,6 +45,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     MSG msg;
 
+	setup(100);
+
     // Main message loop:
     while (GetMessage(&msg, nullptr, 0, 0))
     {
@@ -53,6 +58,47 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
 
     return (int) msg.wParam;
+}
+
+void setup(int num_lines) {
+	const char* interface_name = "img0"; //which camera
+	const int image_width = 512; //image size
+	const int image_height = 1;
+
+	unsigned int bytes_per_pixel;
+	unsigned int* skip_count_buffers = new unsigned int[num_lines](); //zero initialize (we aren't skipping anything)
+
+	INTERFACE_ID interface_ID = 0;
+	SESSION_ID session_ID = 0;
+	imgInterfaceOpen(interface_name, &interface_ID); //open interface and session
+	imgSessionOpen(interface_ID, &session_ID);
+
+	imgSetAttribute2(session_ID, IMG_ATTR_ROI_WIDTH, image_width); //set image width and height to get
+	imgSetAttribute2(session_ID, IMG_ATTR_ROI_HEIGHT, image_height);
+	imgSetAttribute2(session_ID, IMG_ATTR_ROWPIXELS, image_width);
+
+	BUFLIST_ID buflist_ID = 0;
+	imgCreateBufList(num_lines, &buflist_ID); //make a buffer list
+	imgGetAttribute(session_ID, IMG_ATTR_BYTESPERPIXEL, &bytes_per_pixel); //make the buffer and pointers to it
+	unsigned int buf_size = image_width * image_height * bytes_per_pixel;
+
+	uint16_t** line_buffers_ptrs = new uint16_t*[num_lines];
+	uint16_t* line_buffers = new uint16_t[buf_size * num_lines];
+
+	for (int i = 0; i < num_lines; ++i) {
+		line_buffers_ptrs[i] = line_buffers + i*buf_size;
+		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_ADDRESS, line_buffers_ptrs[i]); //register the ptr to the buffer
+		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_SIZE, buf_size);
+		unsigned int buf_cmd = (i == num_lines - 1) ? IMG_CMD_STOP : IMG_CMD_NEXT;
+		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_COMMAND, buf_cmd);
+		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_SKIPCOUNT, skip_count_buffers[i]);
+	}
+
+	imgMemLock(buflist_ID);
+	imgSessionConfigure(session_ID, buflist_ID);
+
+	//TODO: triggering
+	//TODO: imgSequenceSetup
 }
 
 
