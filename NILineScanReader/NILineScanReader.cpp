@@ -4,9 +4,12 @@
 #include "stdafx.h"
 #include "NILineScanReader.h"
 #include <cstdint>
+#include <future>
+#include <stdexcept>
 #include "niimaq.h"
 
 #define MAX_LOADSTRING 100
+#define errChk(fCall) if (error = (fCall), error < 0) {throw std::runtime_error("");}
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -18,7 +21,9 @@ ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
-void setup(int num_lines);
+bool setup_buffers(int num_lines, int num_frames);
+void DisplayIMAQError(Int32 error);
+bool copy_ring_buffer(const SESSION_ID& session_ID, uint8_t* large_buffer, int bytes_per_image, int buffers_per_image, bool* volatile stop);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -45,7 +50,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     MSG msg;
 
-	setup(100);
+	setup_buffers(512, 1000000);
 
     // Main message loop:
     while (GetMessage(&msg, nullptr, 0, 0))
@@ -60,47 +65,79 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
-void setup(int num_lines) {
+bool setup_buffers(int num_lines, int num_frames) {
 	const char* interface_name = "img0"; //which camera
 	const int image_width = 512; //image size
 	const int image_height = 1;
 
+	int error = 0;
 	unsigned int bytes_per_pixel;
 	unsigned int* skip_count_buffers = new unsigned int[num_lines](); //zero initialize (we aren't skipping anything)
 
 	INTERFACE_ID interface_ID = 0;
 	SESSION_ID session_ID = 0;
-	imgInterfaceOpen(interface_name, &interface_ID); //open interface and session
-	imgSessionOpen(interface_ID, &session_ID);
+	try {
+		errChk(imgInterfaceOpen(interface_name, &interface_ID)); //open interface and session
+		errChk(imgSessionOpen(interface_ID, &session_ID));
 
-	imgSetAttribute2(session_ID, IMG_ATTR_ROI_WIDTH, image_width); //set image width and height to get
-	imgSetAttribute2(session_ID, IMG_ATTR_ROI_HEIGHT, image_height);
-	imgSetAttribute2(session_ID, IMG_ATTR_ROWPIXELS, image_width);
+		errChk(imgSetAttribute2(session_ID, IMG_ATTR_ROI_WIDTH, image_width)); //set image width and height to get
+		errChk(imgSetAttribute2(session_ID, IMG_ATTR_ROI_HEIGHT, image_height));
+		errChk(imgSetAttribute2(session_ID, IMG_ATTR_ROWPIXELS, image_width));
 
-	BUFLIST_ID buflist_ID = 0;
-	imgCreateBufList(num_lines, &buflist_ID); //make a buffer list
-	imgGetAttribute(session_ID, IMG_ATTR_BYTESPERPIXEL, &bytes_per_pixel); //make the buffer and pointers to it
-	unsigned int buf_size = image_width * image_height * bytes_per_pixel;
+		BUFLIST_ID buflist_ID = 0;
+		errChk(imgCreateBufList(num_lines, &buflist_ID)); //make a buffer list
+		errChk(imgGetAttribute(session_ID, IMG_ATTR_BYTESPERPIXEL, &bytes_per_pixel)); //make the buffer and pointers to it
+		unsigned int ring_buf_size = image_width * image_height * bytes_per_pixel;
 
-	uint16_t** line_buffers_ptrs = new uint16_t*[num_lines];
-	uint16_t* line_buffers = new uint16_t[buf_size * num_lines];
+		uint8_t** line_buffers_ptrs = new uint8_t*[num_lines];
+		uint8_t* line_buffers = new uint8_t[ring_buf_size * num_lines];
 
-	for (int i = 0; i < num_lines; ++i) {
-		line_buffers_ptrs[i] = line_buffers + i*buf_size;
-		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_ADDRESS, line_buffers_ptrs[i]); //register the ptr to the buffer
-		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_SIZE, buf_size);
-		unsigned int buf_cmd = (i == num_lines - 1) ? IMG_CMD_STOP : IMG_CMD_NEXT;
-		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_COMMAND, buf_cmd);
-		imgSetBufferElement2(buflist_ID, i, IMG_BUFF_SKIPCOUNT, skip_count_buffers[i]);
+		uint8_t* large_buffer = new uint8_t[num_lines * ring_buf_size * num_frames];
+
+		for (int i = 0; i < num_lines; ++i) {
+			line_buffers_ptrs[i] = line_buffers + i*ring_buf_size;
+			errChk(imgSetBufferElement2(buflist_ID, i, IMG_BUFF_ADDRESS, line_buffers_ptrs[i])); //register the ptr to the buffer
+			errChk(imgSetBufferElement2(buflist_ID, i, IMG_BUFF_SIZE, ring_buf_size));
+			unsigned int buf_cmd = (i == num_lines - 1) ? IMG_CMD_STOP : IMG_CMD_NEXT;
+			errChk(imgSetBufferElement2(buflist_ID, i, IMG_BUFF_COMMAND, buf_cmd));
+		}
+
+		errChk(imgMemLock(buflist_ID));
+		errChk(imgSessionConfigure(session_ID, buflist_ID));
+
+		//TODO: triggering
+
+		errChk(imgSessionAcquire(session_ID, TRUE, NULL)); //start acquisition, async, no callback
+
+		bool stop = false;
+		std::future<bool> copy_handle = std::async(std::launch::async, copy_ring_buffer, session_ID, large_buffer, ring_buf_size, num_lines, &stop);
 	}
-
-	imgMemLock(buflist_ID);
-	imgSessionConfigure(session_ID, buflist_ID);
-
-	//TODO: triggering
-	//TODO: imgSequenceSetup
+	catch (const std::runtime_error& ex) {
+		DisplayIMAQError(error);
+		return false;
+	}
+	return true;
 }
 
+bool copy_ring_buffer(const SESSION_ID& session_ID, uint8_t* large_buffer, int bytes_per_image, int buffers_per_image, bool* volatile stop) {
+	int error = 0;
+	uInt32 buf_num = 0;
+	uInt32 current_buf = 0;
+	void* buf_addr = nullptr;
+	try {
+		while (!*stop) {
+			errChk(imgSessionExamineBuffer2(session_ID, buf_num, &current_buf, &buf_addr));
+			memcpy(large_buffer + (current_buf%buffers_per_image)*bytes_per_image, buf_addr, bytes_per_image * sizeof(*large_buffer));
+			errChk(imgSessionReleaseBuffer(session_ID));
+			buf_num = current_buf + 1;
+		}
+	}
+	catch (const std::runtime_error& ex) {
+		DisplayIMAQError(error);
+		return false;
+	}
+	return true;
+}
 
 
 //
@@ -223,4 +260,18 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
     return (INT_PTR)FALSE;
+}
+
+// in case of error this function will display a dialog box
+// with the error message
+void DisplayIMAQError(Int32 error)
+{
+	static Int8 ErrorMessage[256];
+
+	memset(ErrorMessage, 0x00, sizeof(ErrorMessage));
+
+	// converts error code to a message
+	imgShowError(error, ErrorMessage);
+
+	MessageBoxA(NULL, ErrorMessage, "Imaq Sample", MB_OK | MB_ICONERROR);
 }
