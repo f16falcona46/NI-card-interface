@@ -1,0 +1,43 @@
+#include <windows.h>
+#include "resource.h"
+
+1 RT_MANIFEST "Application.manifest"
+
+1 VERSIONINFO
+FILEVERSION     0,0,0,1
+PRODUCTVERSION  0,0,0,1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+      VALUE "CompanyName", "SketchyCo"
+      VALUE "FileDescription", "Dewarping and vignetting correction"
+      VALUE "FileVersion", "0.001"
+      VALUE "InternalName", "picture_preprocessor"
+      VALUE "LegalCopyright", "Jason Li"
+      VALUE "OriginalFilename", "picture_preprocessor.exe"
+      VALUE "ProductName", "PicturePreprocessor"
+      VALUE "ProductVersion", "0.001"
+    END
+  END
+
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END
+
+IDI_MYEXEICON ICON "exeicons.ico"
+
+IDI_MYICON ICON "icons.ico"
+
+IDD_CONFIGURE DIALOG 0, 0, 200, 300
+STYLE WS_CAPTION | WS_POPUPWINDOW | WS_MINIMIZEBOX | WS_VISIBLE
+CAPTION "Select Directory"
+FONT 8, "MS Sans Serif"
+BEGIN
+	EDITTEXT IDC_WIDTH, 10, 10, 180, 14
+	EDITTEXT IDC_HEIGHT, 10, 42, 180, 14
+	DEFPUSHBUTTON "Begin Processing", IDOK, 10, 240, 60, 14
+END
