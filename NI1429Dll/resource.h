@@ -9,5 +9,5 @@
 #define IDD_CONFIGURE 300
 #define IDC_WIDTH 301
 #define IDC_HEIGHT 302
-#define IDC_STARTBUTTON 303
+#define IFC_INTERFACENAME 304
 #endif

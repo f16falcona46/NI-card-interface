@@ -77,4 +77,15 @@
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="Application.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="exeicons.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="icons.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
 </Project>
