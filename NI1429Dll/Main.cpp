@@ -51,7 +51,7 @@ INT_PTR CALLBACK ConfigureDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 				buffer_ptr->BindForAcquisition();
 				buffer_ptr->ResetCounter();
 
-				streamer.Setup(ifname.c_str(), width, height, buffer_ptr);
+				streamer.Setup(ifname.c_str(), width, height, buffer_ptr, nullptr);
 				if (streamer.isSetUp) {
 					std::future<void> handle = std::async(std::launch::async, [&streamer]() { streamer.AcquisitionLoop(); });
 					streamer.StartAcquiring();
@@ -61,6 +61,7 @@ INT_PTR CALLBACK ConfigureDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 			catch (const std::exception& e) {
 				MessageBoxA(hwnd, e.what(), "Exception", MB_OK);
 				EndDialog(hwnd, 3);
+				break;
 			}
 			EndDialog(hwnd, IDOK);
 			break;

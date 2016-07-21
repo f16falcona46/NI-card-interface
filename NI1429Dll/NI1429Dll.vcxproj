@@ -161,6 +161,7 @@
     <ClInclude Include="DataBuffer.h" />
     <ClInclude Include="debug_new.h" />
     <ClInclude Include="fast_mutex.h" />
+    <ClInclude Include="IDataAcquisition.h" />
     <ClInclude Include="NI1429Streamer.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="StackWalker.h" />
